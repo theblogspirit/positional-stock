@@ -16,11 +16,7 @@ Run: python scanner.py
 """
 
 import pandas as pd
-<<<<<<< HEAD
 import ta_compat as ta
-=======
-import pandas_ta as ta
->>>>>>> e6da17df837075f1ed8e88bc58024297d1c46ef7
 import time, io, requests, warnings
 from datetime import datetime
 warnings.filterwarnings("ignore")
