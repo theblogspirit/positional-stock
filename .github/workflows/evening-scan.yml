@@ -1,0 +1,105 @@
+name: 🌆 Evening Market Scan (After Close)
+
+# NSE closes at 15:30 IST = 10:00 UTC
+# Run at 10:15 UTC (15:45 IST) — 15 min after close
+on:
+  schedule:
+    - cron: '15 10 * * 1-5'   # Mon–Fri, 15:45 IST
+
+  workflow_dispatch:            # manual trigger from GitHub UI
+
+jobs:
+  evening-scan:
+    name: VCP Scanner + Trade Monitor
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python ──────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Dependencies ────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Restore trades.json from cache ──────────────────
+      - name: Restore trades.json
+        uses: actions/cache@v4
+        with:
+          path: trades.json
+          key: trades-json-${{ github.run_number }}
+          restore-keys: |
+            trades-json-
+
+      # ── 5. Monitor open trades FIRST ───────────────────────
+      - name: Monitor open trades (SL / T1 / T2 checks)
+        env:
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python trade_manager.py
+        continue-on-error: false
+
+      # ── 6. Run VCP scanner ─────────────────────────────────
+      - name: Run VCP scanner (new signals)
+        env:
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scanner.py
+
+      # ── 7. Upload trades.json as artifact ──────────────────
+      - name: Upload trades.json artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trades-json-${{ github.run_id }}
+          path: trades.json
+          retention-days: 30
+
+      # ── 8. Telegram alert on workflow failure ──────────────
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN:  ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests, datetime
+
+          token   = os.environ["TELEGRAM_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          now     = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+          msg = (
+              "🚨 <b>EVENING SCAN FAILED</b>\n\n"
+              f"⏰ <b>Time     :</b> {now}\n"
+              f"🔁 <b>Workflow :</b> Evening Market Scan\n"
+              f"❌ <b>Status   :</b> One or more steps failed\n\n"
+              f"🔗 <a href='{run_url}'>View logs on GitHub</a>\n\n"
+              "⚠️ <b>Action required: Check your trades manually today!</b>"
+          )
+
+          requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+              timeout=10
+          )
+          EOF
