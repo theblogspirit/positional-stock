@@ -1,0 +1,173 @@
+name: 🌅 Morning Brief (Pre-Market)
+
+# NSE opens at 09:15 IST = 03:45 UTC
+# Run at 03:15 UTC (08:45 IST) — 30 min before open
+on:
+  schedule:
+    - cron: '15 3 * * 1-5'    # Mon–Fri, 08:45 IST
+
+  workflow_dispatch:            # manual trigger from GitHub UI
+
+jobs:
+  morning-brief:
+    name: Morning Trade Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # ── 1. Checkout ────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Python ──────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 3. Dependencies ────────────────────────────────────
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # ── 4. Restore latest trades.json ──────────────────────
+      - name: Restore trades.json
+        uses: actions/cache@v4
+        with:
+          path: trades.json
+          key: trades-json-${{ github.run_number }}
+          restore-keys: |
+            trades-json-
+
+      # ── 5. Show previous trades summary ────────────────────
+      - name: Show previous trades summary (console)
+        run: |
+          python - <<'EOF'
+          import json, os
+          from datetime import datetime, date
+
+          if not os.path.exists("trades.json"):
+              print("No trades.json found. No previous trades recorded.")
+          else:
+              with open("trades.json") as f:
+                  trades = json.load(f)
+
+              open_trades  = [t for t in trades if t["status"] == "OPEN"]
+              closed_today = [
+                  t for t in trades
+                  if t.get("close_date") == str(date.today()) or
+                     t.get("close_date") == str(datetime.utcnow().date())
+              ]
+
+              print(f"\n{'='*50}")
+              print(f"  PREVIOUS TRADES SUMMARY — {date.today()}")
+              print(f"{'='*50}")
+              print(f"  Open trades  : {len(open_trades)}")
+              print(f"  Closed today : {len(closed_today)}")
+              print()
+
+              for t in open_trades:
+                  print(f"  📌 {t['ticker']:<14} Entry ₹{t['entry']}  |  Day {t.get('days_held',0)}  |  T1_hit: {t.get('t1_hit', False)}")
+
+              if closed_today:
+                  print("\n  Closed today:")
+                  for t in closed_today:
+                      pnl = t.get("exit_pnl", 0)
+                      emoji = "✅" if pnl > 0 else "❌"
+                      print(f"  {emoji} {t['ticker']:<14} Exit ₹{t.get('exit_price','?')}  P&L: {pnl:+}%  ({t.get('outcome','?')})")
+          EOF
+
+      # ── 6. Send morning summary to Telegram ────────────────
+      - name: Send morning brief to Telegram
+        env:
+          ANGEL_API_KEY:      ${{ secrets.ANGEL_API_KEY }}
+          ANGEL_CLIENT_ID:    ${{ secrets.ANGEL_CLIENT_ID }}
+          ANGEL_PASSWORD:     ${{ secrets.ANGEL_PASSWORD }}
+          ANGEL_TOTP_SECRET:  ${{ secrets.ANGEL_TOTP_SECRET }}
+          TELEGRAM_TOKEN:     ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python trade_manager.py morning
+
+      # ── 7. Send previous closed trades recap ───────────────
+      - name: Send previous day closed trades recap
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import json, os, requests
+          from datetime import datetime, date, timedelta
+
+          token   = os.environ["TELEGRAM_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+
+          if not os.path.exists("trades.json"):
+              print("No trades.json — skipping recap.")
+              exit(0)
+
+          with open("trades.json") as f:
+              trades = json.load(f)
+
+          yesterday = str(date.today() - timedelta(days=1))
+          # Include weekend: if today is Monday, look back to Friday
+          if date.today().weekday() == 0:   # Monday
+              yesterday = str(date.today() - timedelta(days=3))
+
+          recent_closed = [
+              t for t in trades
+              if t.get("close_date") == yesterday and t["status"] == "CLOSED"
+          ]
+
+          if not recent_closed:
+              print(f"No trades closed on {yesterday}. Skipping recap.")
+              exit(0)
+
+          lines = [f"📋 <b>PREVIOUS DAY CLOSED TRADES — {yesterday}</b>\n"]
+          for t in recent_closed:
+              pnl   = t.get("exit_pnl", 0)
+              emoji = "✅" if pnl > 0 else "❌"
+              lines.append(
+                  f"{emoji} <b>{t['ticker']}</b> | Entry ₹{t['entry']} → Exit ₹{t.get('exit_price','?')} | "
+                  f"P&L: {pnl:+.2f}% | {t.get('outcome','?')} | Day {t.get('days_held','?')}"
+              )
+
+          msg = "\n".join(lines)
+          requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+              timeout=10
+          )
+          print(f"Sent recap for {len(recent_closed)} closed trades.")
+          EOF
+
+      # ── 8. Telegram alert on workflow failure ──────────────
+      - name: Notify Telegram on failure
+        if: failure()
+        env:
+          TELEGRAM_TOKEN:   ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests, datetime
+
+          token   = os.environ["TELEGRAM_TOKEN"]
+          chat_id = os.environ["TELEGRAM_CHAT_ID"]
+          run_url = "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          now     = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+          msg = (
+              "🚨 <b>MORNING BRIEF FAILED</b>\n\n"
+              f"⏰ <b>Time     :</b> {now}\n"
+              f"🔁 <b>Workflow :</b> Morning Brief\n"
+              f"❌ <b>Status   :</b> One or more steps failed\n\n"
+              f"🔗 <a href='{run_url}'>View logs on GitHub</a>\n\n"
+              "⚠️ <b>Please check your open trades manually before market open!</b>"
+          )
+
+          requests.post(
+              f"https://api.telegram.org/bot{token}/sendMessage",
+              data={"chat_id": chat_id, "text": msg, "parse_mode": "HTML"},
+              timeout=10
+          )
+          EOF

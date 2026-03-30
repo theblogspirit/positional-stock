@@ -1,0 +1,8 @@
+# AngelOne SmartAPI (replaces yfinance)
+smartapi-python
+pyotp
+
+# Data & analysis (unchanged)
+pandas
+# pandas_ta replaced by ta_compat.py (pure numpy/pandas, no external dep)
+requests==2.31.0
