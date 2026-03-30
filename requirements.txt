@@ -1,9 +1,11 @@
-# AngelOne SmartAPI (replaces yfinance)
+# AngelOne SmartAPI + its undeclared transitive deps
 smartapi-python
 logzero
+websocket-client
+PyJWT
 pyotp
 
-# Data & analysis (unchanged)
+# Data & analysis
 pandas
 # pandas_ta replaced by ta_compat.py (pure numpy/pandas, no external dep)
 requests==2.31.0
