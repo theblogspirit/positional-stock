@@ -6,6 +6,5 @@ pyotp
 pandas
 
 # pandas_ta replaced by ta_compat.py (pure numpy/pandas, no external dep)
-=======
 pandas-ta
 requests==2.31.0
