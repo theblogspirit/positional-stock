@@ -4,6 +4,5 @@ pyotp
 
 # Data & analysis (unchanged)
 pandas
-pandas-ta-openbb
+pandas-ta
 requests==2.31.0
-importlib-metadata
