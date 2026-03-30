@@ -4,9 +4,8 @@ pyotp
 
 # Data & analysis (unchanged)
 pandas
-<<<<<<< HEAD
+
 # pandas_ta replaced by ta_compat.py (pure numpy/pandas, no external dep)
 =======
 pandas-ta
->>>>>>> e6da17df837075f1ed8e88bc58024297d1c46ef7
 requests==2.31.0
