@@ -1,5 +1,6 @@
 # AngelOne SmartAPI (replaces yfinance)
 smartapi-python
+logzero
 pyotp
 
 # Data & analysis (unchanged)
